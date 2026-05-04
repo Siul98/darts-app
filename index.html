@@ -186,9 +186,36 @@ html, body {
 }
 .score-display .value { font-size: 28px; font-weight: 700; }
 .score-display .sub { font-size: 13px; color: var(--mut); margin-top: 2px; }
+
+#debug-log {
+  position: fixed; top: env(safe-area-inset-top); left: 0; right: 0;
+  max-height: 50vh; overflow-y: auto;
+  background: rgba(0, 0, 0, 0.92); color: #00ff88;
+  font: 11px ui-monospace, Menlo, monospace;
+  padding: 8px 12px;
+  z-index: 9999;
+  white-space: pre-wrap; word-break: break-all;
+  border-bottom: 1px solid #00ff88;
+  display: none;
+}
+#debug-log.show { display: block; }
+#debug-log .err { color: #ff4040; }
+#debug-log .warn { color: #ffaa00; }
+#debug-close {
+  position: fixed; top: calc(env(safe-area-inset-top) + 4px); right: 8px;
+  z-index: 10000;
+  background: #ff4040; color: white;
+  border: none; border-radius: 12px;
+  padding: 4px 10px; font: 11px monospace;
+  display: none;
+}
+#debug-log.show + #debug-close { display: block; }
 </style>
 </head>
 <body>
+
+<div id="debug-log"></div>
+<button id="debug-close" onclick="document.getElementById('debug-log').classList.remove('show')">×</button>
 
 <div id="app">
 
@@ -233,6 +260,32 @@ html, body {
 </div>
 
 <script>
+// =====================================================
+// On-screen debug panel (so we can see errors on iOS without DevTools)
+// =====================================================
+function dbg(msg, level) {
+  const el = document.getElementById('debug-log');
+  if (!el) { console.log(msg); return; }
+  el.classList.add('show');
+  const line = document.createElement('div');
+  if (level) line.className = level;
+  const t = new Date().toTimeString().slice(0, 8);
+  line.textContent = `[${t}] ${msg}`;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+  console.log('[dbg]', msg);
+}
+window.addEventListener('error', e => {
+  dbg('JS ERROR: ' + (e.message || 'unknown') + ' @ ' + (e.filename || '?') + ':' + (e.lineno || '?'), 'err');
+});
+window.addEventListener('unhandledrejection', e => {
+  const r = e.reason;
+  dbg('PROMISE REJECTED: ' + (r && r.message ? r.message : String(r)), 'err');
+});
+dbg('App geladen. UA: ' + navigator.userAgent.slice(0, 80));
+dbg('mediaDevices: ' + (navigator.mediaDevices ? 'OK' : 'FEHLT'));
+dbg('Origin: ' + location.origin + ' (secure=' + window.isSecureContext + ')');
+
 const S = {
   stream: null,
   video: null,
@@ -261,40 +314,79 @@ const RINGS = {
   double:      [0.9529,  1.0000],
 };
 
+async function tryGetCamera() {
+  // Cascade through progressively simpler constraints — iOS Safari is picky.
+  const attempts = [
+    { video: { facingMode: { exact: 'environment' }, width: { ideal: 1920 } }, audio: false },
+    { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } }, audio: false },
+    { video: { facingMode: 'environment' }, audio: false },
+    { video: true, audio: false },
+  ];
+  let lastErr;
+  for (let i = 0; i < attempts.length; i++) {
+    try {
+      dbg(`getUserMedia versuch ${i + 1}/${attempts.length}: ${JSON.stringify(attempts[i].video)}`);
+      const stream = await navigator.mediaDevices.getUserMedia(attempts[i]);
+      dbg(`✓ Stream erhalten (versuch ${i + 1})`);
+      return stream;
+    } catch (e) {
+      dbg(`✗ versuch ${i + 1}: ${e.name} — ${e.message}`, 'warn');
+      lastErr = e;
+    }
+  }
+  throw lastErr;
+}
+
 async function startCamera() {
+  dbg('startCamera() called');
   try {
-    S.stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: { ideal: 'environment' },
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
-      },
-      audio: false,
-    });
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error('navigator.mediaDevices.getUserMedia ist nicht verfügbar (Browser zu alt oder Private Mode?).');
+    }
+
+    S.stream = await tryGetCamera();
 
     S.video = document.getElementById('video');
     S.overlay = document.getElementById('overlay');
     S.tapLayer = document.getElementById('tap-layer');
 
+    if (!S.video) throw new Error('#video Element fehlt im DOM');
+
     S.video.srcObject = S.stream;
-    await new Promise(res => { S.video.onloadedmetadata = res; });
-    await S.video.play();
+    dbg('srcObject gesetzt, warte auf metadata...');
+
+    // Timeout: if metadata never loads, surface that.
+    await Promise.race([
+      new Promise(res => { S.video.onloadedmetadata = res; }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('onloadedmetadata Timeout (5s)')), 5000)),
+    ]);
+    dbg(`metadata: ${S.video.videoWidth}x${S.video.videoHeight}`);
+
+    try {
+      await S.video.play();
+      dbg('video.play() OK');
+    } catch (playErr) {
+      dbg('video.play() FAIL: ' + playErr.message, 'err');
+      throw playErr;
+    }
 
     document.getElementById('welcome').classList.remove('active');
     document.getElementById('camera-screen').classList.add('active');
+    dbg('Screen gewechselt zu camera-screen');
 
     if ('wakeLock' in navigator) {
-      try { await navigator.wakeLock.request('screen'); } catch (e) {}
+      try { await navigator.wakeLock.request('screen'); dbg('wake lock aktiv'); }
+      catch (e) { dbg('wake lock fehlgeschlagen: ' + e.message, 'warn'); }
     }
 
     S.tapLayer.addEventListener('click', onTap);
     window.addEventListener('resize', updateOverlay);
 
     enterCalibrateMode();
+    dbg('Kalibrierungs-Modus aktiv. Tap-Logging an.');
   } catch (err) {
-    alert('Kamera konnte nicht gestartet werden: ' + err.message +
-          '\n\nAuf iOS brauchst du HTTPS und die Erlaubnis für Kamera-Zugriff.');
-    console.error(err);
+    dbg('FEHLER beim Kamera-Start: ' + err.name + ' — ' + err.message, 'err');
+    dbg('Hinweise: (1) Safari benutzen, kein In-App-Browser. (2) Kein Private Mode. (3) Kamera-Permission in iOS-Einstellungen > Safari > Kamera = Fragen/Erlauben.', 'warn');
   }
 }
 
