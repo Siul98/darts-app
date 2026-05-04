@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0a0a0a">
+<title>Darts Auto-Score</title>
+<style>
+:root {
+  --bg: #0a0a0a;
+  --surface: #161616;
+  --txt: #f5f5f7;
+  --mut: #8e8e93;
+  --brd: rgba(255,255,255,0.12);
+  --accent: #00d27a;
+  --accent-soft: rgba(0,210,122,0.15);
+  --red: #ff3b30;
+  --glass: rgba(255,255,255,0.06);
+  --glass-strong: rgba(255,255,255,0.12);
+  --safe-top: env(safe-area-inset-top);
+  --safe-bottom: env(safe-area-inset-bottom);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  width: 100%; height: 100%;
+  background: var(--bg); color: var(--txt);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif;
+  font-size: 16px; line-height: 1.4;
+  overflow: hidden;
+  overscroll-behavior: none;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+#app { width: 100vw; height: 100vh; position: relative; }
+
+.screen { position: absolute; inset: 0; display: none; flex-direction: column; }
+.screen.active { display: flex; }
+
+#welcome {
+  align-items: center; justify-content: center; gap: 32px;
+  padding: 32px;
+  background: radial-gradient(ellipse at top, #1a1a1a 0%, #0a0a0a 60%);
+}
+#welcome .logo {
+  width: 120px; height: 120px;
+  border-radius: 50%;
+  background: conic-gradient(from -9deg,
+    #1a1a1a 0deg 18deg, #f5f5f7 18deg 36deg,
+    #1a1a1a 36deg 54deg, #f5f5f7 54deg 72deg,
+    #1a1a1a 72deg 90deg, #f5f5f7 90deg 108deg,
+    #1a1a1a 108deg 126deg, #f5f5f7 126deg 144deg,
+    #1a1a1a 144deg 162deg, #f5f5f7 162deg 180deg,
+    #1a1a1a 180deg 198deg, #f5f5f7 198deg 216deg,
+    #1a1a1a 216deg 234deg, #f5f5f7 234deg 252deg,
+    #1a1a1a 252deg 270deg, #f5f5f7 270deg 288deg,
+    #1a1a1a 288deg 306deg, #f5f5f7 306deg 324deg,
+    #1a1a1a 324deg 342deg, #f5f5f7 342deg 360deg);
+  position: relative;
+  box-shadow: 0 0 60px rgba(0, 210, 122, 0.25);
+}
+#welcome .logo::before {
+  content: ""; position: absolute; inset: 14%;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: inset 0 0 20px rgba(0,0,0,0.3);
+}
+#welcome .logo::after {
+  content: ""; position: absolute; inset: 42%;
+  border-radius: 50%;
+  background: var(--red);
+}
+#welcome h1 { font-size: 32px; font-weight: 700; letter-spacing: -0.5px; }
+#welcome p { color: var(--mut); text-align: center; max-width: 320px; }
+.btn-primary {
+  background: var(--accent); color: #000;
+  padding: 16px 32px; border-radius: 24px;
+  font-size: 17px; font-weight: 600;
+  border: none; cursor: pointer;
+  min-width: 200px;
+  transition: transform 0.15s, box-shadow 0.15s;
+  box-shadow: 0 8px 24px rgba(0, 210, 122, 0.3);
+}
+.btn-primary:active { transform: scale(0.97); }
+
+#camera-screen { position: relative; }
+#video {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover;
+  background: #000;
+}
+#overlay {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+}
+#tap-layer {
+  position: absolute; inset: 0;
+  pointer-events: auto;
+}
+
+.hud-top {
+  position: absolute; top: 0; left: 0; right: 0;
+  padding: calc(var(--safe-top) + 12px) 16px 12px;
+  background: linear-gradient(to bottom, rgba(0,0,0,0.55), transparent);
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px;
+  pointer-events: none;
+  z-index: 10;
+}
+.hud-top > * { pointer-events: auto; }
+.hud-bottom {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  padding: 16px 16px calc(var(--safe-bottom) + 16px);
+  background: linear-gradient(to top, rgba(0,0,0,0.65), transparent);
+  display: flex; flex-direction: column; gap: 12px;
+  pointer-events: none;
+  z-index: 10;
+}
+.hud-bottom > * { pointer-events: auto; }
+
+.glass-pill {
+  background: var(--glass);
+  border: 1px solid var(--brd);
+  border-radius: 20px;
+  padding: 8px 14px;
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  font-size: 14px; font-weight: 500;
+  color: var(--txt);
+  display: flex; align-items: center; gap: 8px;
+}
+.glass-pill.tap { cursor: pointer; }
+.glass-pill.tap:active { background: var(--glass-strong); }
+
+.instruction {
+  background: rgba(0,0,0,0.55);
+  border: 1px solid var(--brd);
+  border-radius: 16px;
+  padding: 12px 16px;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  font-size: 15px; line-height: 1.4;
+  text-align: center;
+}
+.instruction .step-num {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px;
+  background: var(--accent); color: #000;
+  border-radius: 50%; font-weight: 700;
+  font-size: 13px;
+  margin-right: 8px;
+}
+
+.cal-marker { fill: var(--accent); stroke: white; stroke-width: 2; }
+.cal-marker-pulse {
+  fill: var(--accent-soft);
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: pulse 1.4s ease-out infinite;
+}
+@keyframes pulse {
+  0% { transform: scale(0.6); opacity: 0.8; }
+  100% { transform: scale(2.5); opacity: 0; }
+}
+
+.score-display {
+  background: var(--glass);
+  border: 1px solid var(--brd);
+  border-radius: 24px;
+  padding: 16px 20px;
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px;
+}
+.score-display .label {
+  font-size: 12px; color: var(--mut);
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.score-display .value { font-size: 28px; font-weight: 700; }
+.score-display .sub { font-size: 13px; color: var(--mut); margin-top: 2px; }
+</style>
+</head>
+<body>
+
+<div id="app">
+
+  <div id="welcome" class="screen active">
+    <div class="logo"></div>
+    <div style="text-align: center;">
+      <h1>Darts Auto-Score</h1>
+      <p style="margin-top: 8px;">Halte die Kamera auf dein Board. Wir erkennen den Score automatisch.</p>
+    </div>
+    <button class="btn-primary" onclick="startCamera()">Kamera starten</button>
+    <p style="font-size: 13px; color: var(--mut); text-align: center;">
+      Tipp: Stelle das Handy auf einem Stativ auf, sodass das gesamte Board sichtbar ist.
+    </p>
+  </div>
+
+  <div id="camera-screen" class="screen">
+    <video id="video" playsinline muted autoplay></video>
+    <svg id="overlay"></svg>
+    <div id="tap-layer"></div>
+
+    <div class="hud-top">
+      <div id="status-pill" class="glass-pill">📷 Kalibrierung</div>
+      <div id="recal-pill" class="glass-pill tap" onclick="restartCalibration()" style="display:none;">🎯 Re-Cal</div>
+    </div>
+
+    <div class="hud-bottom">
+      <div id="instruction" class="instruction">
+        <span class="step-num">1</span>Tippe das <b>obere Ende des 20er-Felds</b> (Außenkante Doppelring, 12 Uhr).
+      </div>
+      <div id="play-hud" style="display:none;">
+        <div class="score-display">
+          <div>
+            <div class="label">Letzter Test-Punkt</div>
+            <div class="value" id="last-score">–</div>
+            <div class="sub" id="last-detail">Tippe aufs Bild zum Testen</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const S = {
+  stream: null,
+  video: null,
+  overlay: null,
+  tapLayer: null,
+  calibPoints: [],
+  homography: null,
+  mode: 'calibrate',
+};
+
+const CALIB_LABELS = [
+  '20er <b>oben</b> (12 Uhr, Außenkante Doppel)',
+  '6er <b>rechts</b> (3 Uhr, Außenkante Doppel)',
+  '3er <b>unten</b> (6 Uhr, Außenkante Doppel)',
+  '11er <b>links</b> (9 Uhr, Außenkante Doppel)',
+];
+
+const SEGMENTS = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5];
+
+const RINGS = {
+  bullseye:    [0,       0.0374],
+  bull:        [0.0374,  0.0935],
+  innerSingle: [0.0935,  0.5824],
+  triple:      [0.5824,  0.6294],
+  outerSingle: [0.6294,  0.9529],
+  double:      [0.9529,  1.0000],
+};
+
+async function startCamera() {
+  try {
+    S.stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+      },
+      audio: false,
+    });
+
+    S.video = document.getElementById('video');
+    S.overlay = document.getElementById('overlay');
+    S.tapLayer = document.getElementById('tap-layer');
+
+    S.video.srcObject = S.stream;
+    await new Promise(res => { S.video.onloadedmetadata = res; });
+    await S.video.play();
+
+    document.getElementById('welcome').classList.remove('active');
+    document.getElementById('camera-screen').classList.add('active');
+
+    if ('wakeLock' in navigator) {
+      try { await navigator.wakeLock.request('screen'); } catch (e) {}
+    }
+
+    S.tapLayer.addEventListener('click', onTap);
+    window.addEventListener('resize', updateOverlay);
+
+    enterCalibrateMode();
+  } catch (err) {
+    alert('Kamera konnte nicht gestartet werden: ' + err.message +
+          '\n\nAuf iOS brauchst du HTTPS und die Erlaubnis für Kamera-Zugriff.');
+    console.error(err);
+  }
+}
+
+function enterCalibrateMode() {
+  S.mode = 'calibrate';
+  S.calibPoints = [];
+  S.homography = null;
+  document.getElementById('status-pill').textContent = '📷 Kalibrierung';
+  document.getElementById('recal-pill').style.display = 'none';
+  document.getElementById('play-hud').style.display = 'none';
+  document.getElementById('instruction').style.display = 'block';
+  updateInstruction();
+  updateOverlay();
+}
+
+function restartCalibration() { enterCalibrateMode(); }
+
+function updateInstruction() {
+  const idx = S.calibPoints.length;
+  const el = document.getElementById('instruction');
+  if (idx < 4) {
+    el.innerHTML = `<span class="step-num">${idx + 1}</span>Tippe das ${CALIB_LABELS[idx]}.`;
+  } else {
+    el.innerHTML = `<span class="step-num">✓</span><b>Kalibriert.</b> Tippe ins Bild, um den Score an einem Punkt zu testen.`;
+  }
+}
+
+function onTap(ev) {
+  const rect = S.tapLayer.getBoundingClientRect();
+  const x = ev.clientX - rect.left;
+  const y = ev.clientY - rect.top;
+
+  if (S.mode === 'calibrate') {
+    S.calibPoints.push({ x, y });
+    if (S.calibPoints.length === 4) {
+      const dst = [
+        { x: 0, y: -1 },
+        { x: 1, y: 0 },
+        { x: 0, y: 1 },
+        { x: -1, y: 0 },
+      ];
+      try {
+        S.homography = computeHomography(S.calibPoints, dst);
+        enterTestMode();
+      } catch (e) {
+        alert('Kalibrierung fehlgeschlagen — die 4 Punkte liegen vermutlich auf einer Linie. Bitte erneut versuchen.');
+        S.calibPoints = [];
+      }
+    }
+    updateInstruction();
+    updateOverlay();
+  } else if (S.mode === 'test') {
+    showScoreAt(x, y);
+    flashTapMarker(x, y);
+  }
+}
+
+function enterTestMode() {
+  S.mode = 'test';
+  document.getElementById('status-pill').textContent = '🎯 Test-Modus';
+  document.getElementById('instruction').style.display = 'none';
+  document.getElementById('play-hud').style.display = 'block';
+  document.getElementById('recal-pill').style.display = 'flex';
+  document.getElementById('last-score').textContent = '–';
+  document.getElementById('last-detail').textContent = 'Tippe irgendwo aufs Bild.';
+  updateOverlay();
+}
+
+function computeHomography(src, dst) {
+  const A = [], b = [];
+  for (let i = 0; i < 4; i++) {
+    const { x: sx, y: sy } = src[i];
+    const { x: dx, y: dy } = dst[i];
+    A.push([sx, sy, 1, 0, 0, 0, -dx * sx, -dx * sy]);
+    b.push(dx);
+    A.push([0, 0, 0, sx, sy, 1, -dy * sx, -dy * sy]);
+    b.push(dy);
+  }
+  const h = solveLinearSystem(A, b);
+  return [
+    [h[0], h[1], h[2]],
+    [h[3], h[4], h[5]],
+    [h[6], h[7], 1],
+  ];
+}
+
+function solveLinearSystem(A, b) {
+  const n = A.length;
+  const M = A.map((row, i) => row.concat([b[i]]));
+  for (let i = 0; i < n; i++) {
+    let maxRow = i, maxVal = Math.abs(M[i][i]);
+    for (let r = i + 1; r < n; r++) {
+      const v = Math.abs(M[r][i]);
+      if (v > maxVal) { maxVal = v; maxRow = r; }
+    }
+    if (maxVal < 1e-12) throw new Error('Singular matrix');
+    if (maxRow !== i) [M[i], M[maxRow]] = [M[maxRow], M[i]];
+    for (let r = i + 1; r < n; r++) {
+      const f = M[r][i] / M[i][i];
+      for (let c = i; c <= n; c++) M[r][c] -= f * M[i][c];
+    }
+  }
+  const x = new Array(n);
+  for (let i = n - 1; i >= 0; i--) {
+    let s = M[i][n];
+    for (let c = i + 1; c < n; c++) s -= M[i][c] * x[c];
+    x[i] = s / M[i][i];
+  }
+  return x;
+}
+
+function applyH(H, x, y) {
+  const w = H[2][0] * x + H[2][1] * y + H[2][2];
+  const xp = (H[0][0] * x + H[0][1] * y + H[0][2]) / w;
+  const yp = (H[1][0] * x + H[1][1] * y + H[1][2]) / w;
+  return { x: xp, y: yp };
+}
+
+function invertMatrix3(M) {
+  const a = M[0][0], b = M[0][1], c = M[0][2];
+  const d = M[1][0], e = M[1][1], f = M[1][2];
+  const g = M[2][0], h = M[2][1], i = M[2][2];
+  const det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+  if (Math.abs(det) < 1e-12) throw new Error('Singular homography');
+  const inv = 1 / det;
+  return [
+    [(e * i - f * h) * inv, (c * h - b * i) * inv, (b * f - c * e) * inv],
+    [(f * g - d * i) * inv, (a * i - c * g) * inv, (c * d - a * f) * inv],
+    [(d * h - e * g) * inv, (b * g - a * h) * inv, (a * e - b * d) * inv],
+  ];
+}
+
+function scoreFromBoardCoord(bx, by) {
+  const r = Math.sqrt(bx * bx + by * by);
+
+  if (r < RINGS.bullseye[1]) return { score: 50, label: '50', kind: 'bullseye' };
+  if (r < RINGS.bull[1])     return { score: 25, label: '25', kind: 'bull' };
+  if (r > RINGS.double[1] + 1e-9) return { score: 0,  label: 'Miss', kind: 'miss' };
+
+  let theta = Math.atan2(by, bx);
+  let cwFromTop = theta + Math.PI / 2;
+  cwFromTop = ((cwFromTop % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+  const segWidth = 2 * Math.PI / 20;
+  const segIdx = Math.floor(((cwFromTop + segWidth / 2) % (2 * Math.PI)) / segWidth) % 20;
+  const baseValue = SEGMENTS[segIdx];
+
+  if (r >= RINGS.triple[0] && r < RINGS.triple[1]) {
+    return { score: baseValue * 3, label: 'T' + baseValue, kind: 'triple' };
+  }
+  // Outer double ring: inclusive on outer boundary (a dart on the wire counts).
+  if (r >= RINGS.double[0]) {
+    return { score: baseValue * 2, label: 'D' + baseValue, kind: 'double' };
+  }
+  return { score: baseValue, label: '' + baseValue, kind: 'single' };
+}
+
+function showScoreAt(px, py) {
+  if (!S.homography) return;
+  const board = applyH(S.homography, px, py);
+  const result = scoreFromBoardCoord(board.x, board.y);
+  document.getElementById('last-score').textContent = result.label;
+  const r = Math.sqrt(board.x ** 2 + board.y ** 2).toFixed(2);
+  document.getElementById('last-detail').textContent =
+    `${result.score} Pkt · ${result.kind} · r=${r}`;
+}
+
+function updateOverlay() {
+  const svg = S.overlay;
+  if (!svg) return;
+  const w = window.innerWidth, h = window.innerHeight;
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  svg.setAttribute('width', w);
+  svg.setAttribute('height', h);
+
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+  S.calibPoints.forEach((p, i) => {
+    svg.appendChild(svgEl('circle', {
+      cx: p.x, cy: p.y, r: 12, class: 'cal-marker-pulse',
+    }));
+    svg.appendChild(svgEl('circle', {
+      cx: p.x, cy: p.y, r: 6, class: 'cal-marker',
+    }));
+    const t = svgEl('text', {
+      x: p.x, y: p.y - 16,
+      'text-anchor': 'middle', 'font-size': 14, 'font-weight': 700,
+      fill: '#fff', 'paint-order': 'stroke', stroke: '#000', 'stroke-width': 3,
+    });
+    t.textContent = String(i + 1);
+    svg.appendChild(t);
+  });
+
+  if (S.homography) drawBoardOutline(svg);
+}
+
+function drawBoardOutline(svg) {
+  const Hinv = invertMatrix3(S.homography);
+
+  const ringRadii = [
+    RINGS.bullseye[1], RINGS.bull[1],
+    RINGS.triple[0], RINGS.triple[1],
+    RINGS.double[0], RINGS.double[1],
+  ];
+
+  ringRadii.forEach(rr => {
+    const N = 60;
+    let d = '';
+    for (let i = 0; i <= N; i++) {
+      const a = (i / N) * 2 * Math.PI;
+      const bx = rr * Math.cos(a), by = rr * Math.sin(a);
+      const p = applyH(Hinv, bx, by);
+      d += (i === 0 ? 'M' : 'L') + p.x.toFixed(1) + ',' + p.y.toFixed(1);
+    }
+    svg.appendChild(svgEl('path', {
+      d, fill: 'none',
+      stroke: 'rgba(0, 210, 122, 0.45)', 'stroke-width': 1.2,
+    }));
+  });
+
+  for (let i = 0; i < 20; i++) {
+    const a = i * 2 * Math.PI / 20 + Math.PI / 20 - Math.PI / 2;
+    const inner = applyH(Hinv, RINGS.bull[1] * Math.cos(a), RINGS.bull[1] * Math.sin(a));
+    const outer = applyH(Hinv, 1.0 * Math.cos(a), 1.0 * Math.sin(a));
+    svg.appendChild(svgEl('line', {
+      x1: inner.x.toFixed(1), y1: inner.y.toFixed(1),
+      x2: outer.x.toFixed(1), y2: outer.y.toFixed(1),
+      stroke: 'rgba(0, 210, 122, 0.3)', 'stroke-width': 1,
+    }));
+  }
+
+  const top = applyH(Hinv, 0, -0.85);
+  const lbl = svgEl('text', {
+    x: top.x, y: top.y,
+    'text-anchor': 'middle', 'font-size': 16, 'font-weight': 700,
+    fill: '#00d27a', 'paint-order': 'stroke', stroke: '#000', 'stroke-width': 3,
+  });
+  lbl.textContent = '20';
+  svg.appendChild(lbl);
+}
+
+function flashTapMarker(x, y) {
+  const svg = S.overlay;
+  const dot = svgEl('circle', {
+    cx: x, cy: y, r: 4, fill: '#fff',
+    stroke: '#00d27a', 'stroke-width': 2,
+  });
+  svg.appendChild(dot);
+  setTimeout(() => { if (dot.parentNode) dot.parentNode.removeChild(dot); }, 1500);
+}
+
+function svgEl(tag, attrs) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const k in attrs) el.setAttribute(k, attrs[k]);
+  return el;
+}
+
+(function selfTest() {
+  const cases = [
+    { in: [0, -0.7],   want: '20',   note: 'top single' },
+    { in: [0, 0],      want: '50',   note: 'bullseye' },
+    { in: [0, -0.605], want: 'T20',  note: 'triple 20' },
+    { in: [0, -0.97],  want: 'D20',  note: 'double 20' },
+    { in: [0.7, 0],    want: '6',    note: 'right (6 single)' },
+    { in: [0, 0.7],    want: '3',    note: 'bottom (3 single)' },
+    { in: [-0.7, 0],   want: '11',   note: 'left (11 single)' },
+    { in: [0, 0.05],   want: '25',   note: 'bull (25)' },
+  ];
+  let pass = 0;
+  cases.forEach(c => {
+    const got = scoreFromBoardCoord(c.in[0], c.in[1]).label;
+    if (got === c.want) pass++;
+    else console.error(`FAIL ${c.note}: expected ${c.want}, got ${got}`);
+  });
+  const miss = scoreFromBoardCoord(1.2, 0).kind;
+  if (miss === 'miss') pass++; else console.error('FAIL miss');
+  console.log(`Self-test: ${pass}/${cases.length + 1} passed`);
+})();
+</script>
+
+</body>
+</html>
